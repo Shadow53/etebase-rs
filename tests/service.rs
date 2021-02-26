@@ -1,15 +1,9 @@
 // SPDX-FileCopyrightText: © 2020 EteSync Authors
 // SPDX-License-Identifier: LGPL-2.1-only
 
-use std::env;
 use std::iter;
 use std::collections::HashSet;
-
-const CLIENT_NAME: &str = "etebase-tests";
-
-fn test_url() -> String {
-    env::var("ETEBASE_TEST_API_URL").unwrap_or("http://localhost:8033".to_owned())
-}
+use test_context::test_context;
 
 use etebase::utils::{
     from_base64,
@@ -43,7 +37,6 @@ use etebase::{
     User,
     pretty_fingerprint,
     test_helpers::{
-        test_reset,
         chunk_uids,
     }
 };
@@ -52,38 +45,17 @@ use etebase::{
 mod common;
 
 use common::{
+    CLIENT_NAME,
     USER,
     USER2,
     TestUser,
-    sessionStorageKey,
+    get_test_url,
+    setup::{BaseContext, CreateUsersContext},
 };
 
-fn user_reset(user: &TestUser) -> Result<()> {
-    let client = Client::new(CLIENT_NAME, &test_url())?;
-    let body_struct = etebase::test_helpers::SignupBody {
-        user: &etebase::User::new(user.username,user.email),
-        salt: &from_base64(user.salt)?,
-        pubkey: &from_base64(user.pubkey)?,
-        login_pubkey: &from_base64(user.loginPubkey)?,
-        encrypted_content: &from_base64(user.encryptedContent)?,
-    };
-    test_reset(&client, body_struct)?;
-
-    Ok(())
-}
-
-fn init_test(user: &TestUser) -> Result<Account> {
-    etebase::init()?;
-    user_reset(&user)?;
-
-    let client = Client::new(CLIENT_NAME, &test_url())?;
-    let session_key = from_base64(sessionStorageKey)?;
-
-    let mut ret = Account::restore(client, user.storedSession, Some(&session_key))?;
-    ret.force_server_url(&test_url())?;
-    ret.fetch_token()?;
-
-    Ok(ret)
+fn user_from_context<'a>(ctx: &'a CreateUsersContext, user: &TestUser) -> &'a Account {
+    ctx.accounts.get(user.username)
+        .unwrap_or_else(|| panic!("could not find user with username {}", USER.username))
 }
 
 fn verify_collection(col: &Collection, meta: &ItemMetadata, content: &[u8]) -> Result<()> {
@@ -100,28 +72,30 @@ fn verify_item(item: &Item, meta: &ItemMetadata, content: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[test_context(BaseContext)]
 #[test]
-fn is_etebase_server() -> Result<()> {
-    let client = Client::new(CLIENT_NAME, &test_url())?;
+fn is_etebase_server(ctx: &mut BaseContext) -> Result<()> {
+    let client = Client::new(CLIENT_NAME, &get_test_url())?;
     assert!(Account::is_etebase_server(&client)?);
 
-    let test_url = format!("{}/api/", test_url());
-    let client = Client::new(CLIENT_NAME, &test_url)?;
+    let get_test_url = format!("{}/api/", get_test_url());
+    let client = Client::new(CLIENT_NAME, &get_test_url)?;
     assert!(!Account::is_etebase_server(&client)?);
 
     let client = Client::new(CLIENT_NAME, "http://doesnotexist")?;
     assert!(Account::is_etebase_server(&client).is_err());
 
     // Verify we also fail correctly for login
-    let client = Client::new(CLIENT_NAME, &test_url)?;
+    let client = Client::new(CLIENT_NAME, &get_test_url)?;
     assert_err!(Account::login(client.clone(), USER2.username, USER2.password), Error::NotFound(_));
 
     Ok(())
 }
 
+#[test_context(CreateUsersContext)]
 #[test]
-fn get_dashboard_url() -> Result<()> {
-    let etebase = init_test(&USER)?;
+fn get_dashboard_url(ctx: &mut CreateUsersContext) -> Result<()> {
+    let etebase = user_from_context(ctx, &USER);
 
     match etebase.fetch_dashboard_url() {
         Ok(url) => assert!(url.len() > 0),
@@ -131,9 +105,11 @@ fn get_dashboard_url() -> Result<()> {
     etebase.logout()
 }
 
+#[test_context(CreateUsersContext)]
 #[test]
-fn loading_cache_without_collection_type() -> Result<()> {
-    let etebase = init_test(&USER)?;
+fn loading_cache_without_collection_type(ctx: &mut CreateUsersContext) -> Result<()> {
+    let etebase = user_from_context(ctx, &USER);
+
     let col_mgr = etebase.collection_manager()?;
     let meta = ItemMetadata::new().set_item_type(Some("type")).set_name(Some("Collection")).set_description(Some("Mine")).set_color(Some("#aabbcc")).clone();
     let content = b"SomeContent";
@@ -145,9 +121,12 @@ fn loading_cache_without_collection_type() -> Result<()> {
     etebase.logout()
 }
 
+#[test_context(CreateUsersContext)]
 #[test]
-fn simple_collection_handling() -> Result<()> {
-    let etebase = init_test(&USER)?;
+fn simple_collection_handling(ctx: &mut CreateUsersContext) -> Result<()> {
+    let etebase = ctx.accounts.get(USER.username)
+        .unwrap_or_else(|| panic!("could not find user with username {}", USER.username));
+
     let col_mgr = etebase.collection_manager()?;
     let meta = ItemMetadata::new().set_name(Some("Collection")).set_description(Some("Mine")).set_color(Some("#aabbcc")).clone();
     let content = b"SomeContent";
@@ -168,9 +147,12 @@ fn simple_collection_handling() -> Result<()> {
     etebase.logout()
 }
 
+#[test_context(CreateUsersContext)]
 #[test]
-fn simple_item_handling() -> Result<()> {
-    let etebase = init_test(&USER)?;
+fn simple_item_handling(ctx: &mut CreateUsersContext) -> Result<()> {
+    let etebase = ctx.accounts.get(USER.username)
+        .unwrap_or_else(|| panic!("could not find user with username {}", USER.username));
+
     let col_mgr = etebase.collection_manager()?;
     let col_meta = ItemMetadata::new().set_name(Some("Collection")).clone();
     let col_content = b"SomeContent";
@@ -196,9 +178,12 @@ fn simple_item_handling() -> Result<()> {
     etebase.logout()
 }
 
+#[test_context(CreateUsersContext)]
 #[test]
-fn simple_collection_sync() -> Result<()> {
-    let etebase = init_test(&USER)?;
+fn simple_collection_sync(ctx: &mut CreateUsersContext) -> Result<()> {
+    let etebase = ctx.accounts.get(USER.username)
+        .unwrap_or_else(|| panic!("could not find user with username {}", USER.username));
+
     let col_mgr = etebase.collection_manager()?;
     let meta = ItemMetadata::new().set_name(Some("Collection")).set_description(Some("Mine")).set_color(Some("#aabbcc")).clone();
     let content = b"SomeContent";
@@ -1307,7 +1292,7 @@ fn login_and_password_change_with_key() -> Result<()> {
 
     etebase.logout()?;
 
-    let client = Client::new(CLIENT_NAME, &test_url())?;
+    let client = Client::new(CLIENT_NAME, &get_test_url())?;
     let main_key = from_base64(USER.key)?;
     let etebase = Account::login_key(client, USER.username, &main_key)?;
 
@@ -1330,7 +1315,7 @@ fn signup_with_key() -> Result<()> {
 
     let main_key = from_base64(USER.key)?;
 
-    let client = Client::new(CLIENT_NAME, &test_url())?;
+    let client = Client::new(CLIENT_NAME, &get_test_url())?;
     let user = User::new(USER.username, USER.email);
     let etebase = Account::signup_key(client, &user, &main_key)?;
 
@@ -1341,7 +1326,7 @@ fn signup_with_key() -> Result<()> {
 
     etebase.logout()?;
 
-    let client = Client::new(CLIENT_NAME, &test_url())?;
+    let client = Client::new(CLIENT_NAME, &get_test_url())?;
     let etebase = Account::login_key(client, USER.username, &main_key)?;
 
     let col_mgr = etebase.collection_manager()?;
@@ -1361,7 +1346,7 @@ fn login_and_password_change() -> Result<()> {
     etebase2.logout()?;
 
     let another_password = "AnotherPassword";
-    let client = Client::new(CLIENT_NAME, &test_url())?;
+    let client = Client::new(CLIENT_NAME, &get_test_url())?;
     let mut etebase2 = Account::login(client.clone(), USER2.username, USER2.password)?;
 
     let col_mgr2 = etebase2.collection_manager()?;
@@ -1401,7 +1386,7 @@ fn login_and_password_change() -> Result<()> {
 
 #[test]
 fn session_save_and_restore() -> Result<()> {
-    let client = Client::new(CLIENT_NAME, &test_url())?;
+    let client = Client::new(CLIENT_NAME, &get_test_url())?;
     let etebase = init_test(&USER)?;
 
     let col_mgr = etebase.collection_manager()?;

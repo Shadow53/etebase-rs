@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: © 2020 EteSync Authors
 // SPDX-License-Identifier: LGPL-2.1-only
 
+pub mod setup;
+
+pub const CLIENT_NAME: &str = "etebase-tests";
+
+pub fn get_test_url() -> String {
+    std::env::var("ETEBASE_TEST_API_URL").unwrap_or("http://localhost:8033".to_owned())
+}
+
 #[allow(non_snake_case)]
 pub struct TestUser {
     pub username: &'static str,
